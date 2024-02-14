@@ -4,11 +4,11 @@ clc
 fc = 24e9;  % carrier frequency
 lambda = 3e8 / fc;
 B = 93.1e6; % signal bandwidth
-% M = 256; % Number of OFDM symbols
-% N = 1024;  % Number of sub-carriers
+M = 256; % Number of OFDM symbols
+N = 1024;  % Number of sub-carriers
 
-M = 4; % Number of OFDM symbols
-N = 64;  % Number of sub-carriers
+% M = 4; % Number of OFDM symbols
+% N = 64;  % Number of sub-carriers
 
 % Sub-carrier separation
 Tsymbol = N / B; % Useful symbol duration
@@ -24,39 +24,38 @@ NCP = round(Tcp / Ts);
 data_mod2 = zeros(1, N);
 
 % MIMO PxQ antennas
-Q = 4; % number of receiver antennas
+Q = 300; % number of receiver antennas
 d_antenna = lambda / 2;
 
 % Target Parameters
 c0 = 3e8;
 % Resolution and Unambiguous Range/Velocity
-resolution_R = c0 / (2 * spacing * N); % Resolution Range
+resolution_R = c0 / (2 * spacing * N); % Resolution Range~´
+r_max = c0/(2*spacing);
+
 resolution_v = c0 / (2 * fc * Tsymbol * M); % Resolution Velocity
-resolution_a = lambda / (Q * (0.5 * lambda));
+v_max = c0/(2*fc*Tsymbol);
+
+resolution_a = lambda/(Q*d_antenna); %lambda/(P*Q*d_antenna)
 
 % H>1 
 % R= m , v= m/s
-d = [10 34 50]; % Distance m
+d = [10 40 50 51 100]; % Distance m
 
 mind = min(d) - 5;
 maxd = max(d) + 5;
 
-v = [23 34 5]; % velocity m/s
+v = [20 30 100 150 200]; % velocity m/s
 
-minv = min(v) - 5;
-maxv = max(v) + 5;
 % fd=[0 0 0 0];
-Angle = [70 50 10]; % Degrees
+Angle = [-90 -45 5 45 80]; % Degrees
 
-mina = -90;
-maxa = 90;
 
-angle_r = [-90:90];
 
 for h = 1:length(d) % for h targets we'll have 4 different delays because we have for differently spaced receiving antennas (Q)
     for q = 1:Q 
         delay(h, q) = 2 * d(h) / c0 + (q - 1) * lambda * sind(Angle(h)) / (2 * c0); % relative delay added and changed it for Angle (3.16 pag 52 and 4.10 page 64)
-        fd(h, q) = (2 * (fc / c0)) * v(h); % Doppler Shift
+        fd(h, q) = (2 * (fc / c0)) * v(h); % Doppler Shift (3.17, page 52)
     end
 end
 
@@ -145,7 +144,8 @@ contour(x, y, Per)
 title('Periodogram')
 xlabel('Relative speed m/s')
 ylabel('Distance m')
-axis([minv maxv mind maxd])
+ylim;
+xlim;
 colorbar
 
 for h = 1: length(Angle)  
@@ -153,7 +153,12 @@ for h = 1: length(Angle)
         for k=1:N
             for a=1:180
                 % criar array -90:+90 /somar+91
-                G_new=[G(k,l,1);G(k,l,2);G(k,l,3);G(k,l,4)];
+                %G_new=[G(k,l,1);G(k,l,2);G(k,l,3);G(k,l,4)];
+                G_new = [];
+                for q = 1:Q
+                % Concatenate the q-th element of G(k,l,:) to G_new
+                    G_new = [G_new; G(k, l, q)];
+                end
                 B=exp(2*j*pi*sind(((a-91)))*(0:(Q-1))*(d_antenna/lambda))'; % the index is the angle "a" not Angle               
                 H(k,l,a)=dot(B,G_new);  % the dot product conjugates the first, not the second term
             end
@@ -179,10 +184,11 @@ x2 = [-90:89];
 
 % Plot Periodogram with Angle and Distance Information
 figure(2);
-surf(x2, y2, Per2) 
+contour(x2, y2, Per2) 
 title('Periodogram')
 xlabel('Angle º')
 ylabel('Distance m')
 % Adjust the axis limits as needed
-axis([-90 90 mind maxd])
+ylim;
+xlim;
 colorbar;
