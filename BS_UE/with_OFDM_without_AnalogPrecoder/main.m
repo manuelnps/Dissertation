@@ -71,14 +71,14 @@ for ch = 1:Nchannels
             
             %% Base station
             Ga = exp(1j*2*pi*rand(Nrx, NrxRF, M));                              % random analog equalizer part
-            Gd = computeDigitalEqualizer(Ga, H, nvar(p));                       % MMSE digital equalizer part
+            Gd = computeDigitalEqualizerwithoutGa(Ga, H, nvar(p));                       % MMSE digital equalizer part
             %Ga = 1; %so that it has a neutral effect
 
             % equalize received signal at each AP
             ce = zeros(U, K, M);
             for m = 1:M
                 for k = 1:K
-                    ce(:, k) = Gd(:, :, k, m)'*Ga(:, :, m)'*y(:, k, m);
+                    ce(:, k) = Gd(:, :, k, m)'*y(:, k, m);
                 end
             end
             
@@ -190,40 +190,54 @@ end
 %% compute digital part of equalizer
 function Gd = computeDigitalEqualizer(Ga, H, nvar)
 %% get parameters
-Nrx = size(H, 1);                                   % nr of users
-U = size(H, 2);                                     % nr of users
-K = size(H, 3);                                     % nr of subcarriers
-M = size(H, 4);                                     % nr of APs
+    Nrx = size(H, 1);                                   % nr of users
+    U = size(H, 2);                                     % nr of users
+    K = size(H, 3);                                     % nr of subcarriers
+    M = size(H, 4);                                     % nr of APs
+    Nrf = size(Ga, 2);                                  % nr of RF chains
+    %% allocate memory
+    Gd = zeros(Nrf, U, K, M);
+    % for each AP
+    for m = 1:M
+        % initialize auxiliary variable to be used to compute normalizing constant
+        S0 = zeros(U, 1);
+        % for each subcarrier
+        for k = 1:K
+            % compute received signal correlation
+            R = H(:, :, k, m)*H(:, :, k, m)' + nvar*eye(Nrx);
+            % compute optimum digital part
+            % is used the pseudo inverse instead of inverse since the matrix R may
+            % be ill conditioned as some UT-AP pairs may have very low path loss
+            Gd(:,:,k,m) = inv(Ga(:,:,m)'*R*Ga(:,:,m))*(Ga(:,:,m)'*H(:,:,k,m));
+            % compute auxiliary random variable to normalize digital part
+            S0 = S0 + diag(Gd(:,:,k,m)'*Ga(:,:,m)'*H(:,:,k,m));
+        end
+        % for each subcarrier
+        for k = 1:K
+            % normalize digital part such that \sum_k diag(Gd,k'*Ga'*Hk) = I
+            Gd(:,:,k,m) = Gd(:,:,k,m)*diag(K./S0.'');
+        end
+    end
+end
 
-    if isempty(Ga)
-    % If Ga is empty, create an identity matrix with appropriate dimensions
-        NrxRF = size(H, 2); % Number of RF chains
-        M = size(H, 4); % Number of APs
-        Gd = eye(NrxRF, NrxRF, size(H, 3), M); % Create identity matrix
-    else
-        Nrf = size(Ga, 2);                                  % nr of RF chains
-        %% allocate memory
-        Gd = zeros(Nrf, U, K, M);
-        % for each AP
-        for m = 1:M
-            % initialize auxiliary variable to be used to compute normalizing constant
-            S0 = zeros(U, 1);
-            % for each subcarrier
-            for k = 1:K
-                % compute received signal correlation
-                R = H(:, :, k, m)*H(:, :, k, m)' + nvar*eye(Nrx);
-                % compute optimum digital part
-                % is used the pseudo inverse instead of inverse since the matrix R may
-                % be ill conditioned as some UT-AP pairs may have very low path loss
-                Gd(:,:,k,m) = inv(Ga(:,:,m)'*R*Ga(:,:,m))*(Ga(:,:,m)'*H(:,:,k,m));
-                % compute auxiliary random variable to normalize digital part
-                S0 = S0 + diag(Gd(:,:,k,m)'*Ga(:,:,m)'*H(:,:,k,m));
-            end
-            % for each subcarrier
-            for k = 1:K
-                % normalize digital part such that \sum_k diag(Gd,k'*Ga'*Hk) = I
-                Gd(:,:,k,m) = Gd(:,:,k,m)*diag(K./S0.'');
-            end
+
+function Gd = computeDigitalEqualizerwithoutGa(~, H, nvar)
+    % Get parameters
+    Nrx = size(H, 1);  % Number of receivers
+    U = size(H, 2);    % Number of users
+    K = size(H, 3);    % Number of subcarriers
+    M = size(H, 4);    % Number of APs
+    
+    % Allocate memory for Gd
+    Gd = zeros(Nrx, U, K, M);
+    
+    % Compute Gd without Ga
+    for m = 1:M
+        for k = 1:K
+            % Compute received signal correlation
+            R = H(:, :, k, m) * H(:, :, k, m)' + nvar * eye(Nrx);
+            % Compute optimum digital part
+            Gd(:, :, k, m) = inv(R) * H(:, :, k, m);
         end
     end
 end
