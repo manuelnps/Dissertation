@@ -1,119 +1,102 @@
 %function main
 %% parameters
-% user terminal parameters
-U = 2;                              % nr Users
-Ntx = 16;                           % nr antennas UT
+% User terminal parameters
+U = 4;                              % Number of UEs
+Ntx = 16;                           % Number of antennas UE
 
-% AP parameters
-M = 4;                              % nr APs
-Nrx = 16;                           % nr antennas AP
-NrxRF = M;                          % nr RF chains AP
+% Base station parameters
+M = 2;                              % Number of BSs
+Nrx = 16;                           % Number of antennas BS
+NrxRF = U;                          % Number of RF chains BS
 
-% channel parameters
-Ncl = 5;                            % nr clusters
-Nray = 3;                           % nr rays
-AngleSpread = 8;                    % angle spread
+% Channel parameters
+Ncl = 5;                            % Number of clusters
+Nray = 3;                           % Number of rays
+AngleSpread = 8;                    % Angle spread
 
 % OFDM parameters
-K = 64;                            % nr of subcarriers
+K = 64;                             % Number of subcarriers
 MODULATION_ORDER = 4;               % QPSK
 
+% Simulation parameters
+Nchannels = 100;                    % Number of channel realizations
+Nsym = 1;                           % Number of noise realizations
+EbN0 = -20:10:20;                   % Energy per bit to noise power spectral density ratio
+nvar = 10.^(-EbN0./10)/(log2(MODULATION_ORDER));   % Noise variance
 
-
-% simulation parameters
-Nchannels = 100;                    % number of channel realizations
-Nsym = 1;                          % number of noise realizations
-EbN0 = -20:10:20;                   % energy per bit to noise power spectral density ratio
-nvar = 10.^(-EbN0./10)/(log2(MODULATION_ORDER));   % noise variance
-
-%% allocate memory and construct objects
+%% Allocate memory and construct objects
 ber = nan(Nchannels, Nsym, length(EbN0));
-%channel = CWideband_mmWave_Channel(Nrx, Ntx, K, K/4, Ncl, Nray, 10, 10, AngleSpread);%% construct channel object
-channel = CWideband_mmWave_Channel(Ntx, Nrx, K, K/4, Ncl, Nray, 10, 10, AngleSpread);%% construct channel object (DL)
-%DFT_S_OFDM = CDFT_S_OFDM(K, U, 1, MODULATION_ORDER);                            %% construct DFT-S-OFDM object //sc-fdma
-DFT_S_OFDM = CDFT_S_OFDM(K, M, 1, MODULATION_ORDER);                            %% construct DFT-S-OFDM object //sc-fdma (DL)
+channel = CWideband_mmWave_Channel(Nrx, Ntx, K, K/4, Ncl, Nray, 10, 10, AngleSpread); % Construct channel object
+DFT_S_OFDM = CDFT_S_OFDM(K, M, 1, MODULATION_ORDER);                             % Construct DFT-S-OFDM object
 
-
-%% open new figure to plot the results
+%% Open new figure to plot the results
 figure('Position', [100, 100, 1*560, 1*420]);
 
-%% start timer 
+%% Start timer 
 tic
     
-%% for each channel realization
+%% For each channel realization
 for ch = 1:Nchannels
     
-    % generate channel for all UT and AP pairs
-    %H0 = generateChannels(channel, M, U);
-    H0 = generateChannels(channel, U, M); %(DL)
-    %% for each noise realization
+    % Generate channel for all BS and UE pairs
+    H0 = generateChannels(channel, U, M);
+    
+    %% For each noise realization
     for n = 1:Nsym
-        % generate noise with unit variance
-        %noise = sqrt(1/2)*complex(randn(Nrx, K), randn(Nrx, K));
-        noise = sqrt(1/2)*complex(randn(Ntx, K), randn(Ntx, K)); %(DL)
-        %% sweep over the EbN0 range
+        % Generate noise with unit variance
+        noise = sqrt(1/2)*complex(randn(Nrx, K), randn(Nrx, K));
+        
+        %% Sweep over the EbN0 range
         for p = 1:length(EbN0)
-            %% User terminals
+            %% BS
             b = DFT_S_OFDM.genRandBits();                                       % Generate random bits
             s = DFT_S_OFDM.mod(b);                                              % DFT_S_OFDM modulation
-            %W = exp(1j*2*pi*rand(Ntx, U));                                      % analog precoder
-            W = exp(1j*2*pi*rand(Nrx, M));                                      % analog precoder %(DL)
-
+            W = exp(1j*2*pi*rand(Ntx, M));                                      % Analog precoder
             
             %% Equivalent channel, combining channel and precoder
-            %H = getEquivalentChannel(H0, W);
-            H = getEquivalentChannel_withoutW(H0, W); %(DL)
+            H = getEquivalentChannel(H0, W);
             
             %% Channel
-            %y = zeros(Nrx, K, M);                                               % alocate memory for received signal
-            y = zeros(Ntx, K, U); %(DL)
-
-            % pass transmitted signal through the channel and add noise
-            %for m = 1:M
-            for m = 1:U %(DL)
-                for k = 1:K 
-                    % analog precoder changes      
-                       y(:, k, m) = H(:, :, k, m)*s(k, :).'+ sqrt(nvar(p))*noise(:,k);     
-                end
-            end
-            
-            %% Base station
-            %Ga = exp(1j*2*pi*rand(Nrx, NrxRF, M));                              % random analog equalizer part
-            Ga = exp(1j*2*pi*rand(Ntx, NrxRF, U));                              % random analog equalizer part %(DL)
-            Gd = computeDigitalEqualizerwithoutGa(Ga, H, nvar(p));                       % MMSE digital equalizer part
-            %Ga = 1; %so that it has a neutral effect
-
-            % equalize received signal at each AP
-            %ce = zeros(U, K, M);
-            ce = zeros(M, K, U); %(DL)
-            %for m = 1:M
-            for m = 1:U %(DL)
+            y = zeros(Nrx, K, U);                                               % Allocate memory for received signal
+            % Pass transmitted signal through the channel and add noise
+            for u = 1:U
                 for k = 1:K
-                    ce(:, k) = Gd(:, :, k, m)'*y(:, k, m);
+                    y(:, k, u) = H(:, :, k, u)*s(k, :).' + sqrt(nvar(p))*noise(:,k);
                 end
             end
             
-            % average signals from all APs at CU
+            %% UE
+            Ga = exp(1j*2*pi*rand(Nrx, NrxRF, U));                              % Random analog equalizer part           
+            Gd = computeDigitalEqualizer(Ga, H, nvar(p));                       % MMSE digital equalizer part
+            
+            % Equalize received signal at each UE
+            ce = zeros(M, K, U);
+            for u = 1:U
+                for k = 1:K
+                    ce(:, k, u) = Gd(:, :, k, u)'*Ga(:, :, u)'*y(:, k, u);
+                end
+            end
+            
+            % Average signals from all UEs at BS
             ce = mean(ce, 3);
             
             % DFT-S-OFDM demodulation
             br = DFT_S_OFDM.demod(ce.');
             
-            %% compute ber
+            %% Compute BER
             [~, ber(ch, n, p)] = biterr(b, br);
         end
     end
-    sim_time = toc; % read timer
+    sim_time = toc; % Read timer
     
-    %% plot results (average ber over channel and noise)
-    %semilogy(EbN0, squeeze(nanmean(ber, [1 2])));
+    %% Plot results (average BER over channel and noise)
     semilogy(EbN0, squeeze(mean(ber, [1 2])));
     axis([min(EbN0) max(EbN0) 1e-4 0.25])
     xlabel('EbN0 (dB)')
     ylabel('BER')
-    pause(1)                                                                    % wait for the plotting function to finish
+    pause(1)                                                                    % Wait for the plotting function to finish
     
-    %% display information about simulation
+    %% Display information about simulation
     if(mod(ch, 10) == 0)
         avg_sim_time = sim_time/ch;
         Nchannel_left = Nchannels - ch;
@@ -123,179 +106,140 @@ end
 %end
 
 
-%% generate equivalent channel, including precoder, for all UT and AP pairs
-function H0 = generateChannels(channel, M, U)
-%% Channel parameters
-np = 4.1;   % path-Loss exponents
-dp_s = 7.6; % standard deviation of shadowing factor
+%% Generate equivalent channel, including precoder, for all BS and UE pairs
+function H0 = generateChannels(channel, U, M)
+% Channel parameters
+np = 4.1;   % Path-Loss exponents
+dp_s = 7.6; % Standard deviation of shadowing factor
 f = 28;     % GHz
-rAP = 500;  % AP coverage radius
+rUE = 50;   % UE coverage radius
 
-%% allocate memory for variables
-H0 = zeros(channel.Nr, channel.Nt, channel.Nc, M, U);
-Arx0 = zeros(channel.Nr, channel.Ncl*channel.Nray, M, U);
-pl = zeros(U, M);
-muTx = zeros(U, channel.Ncl, M);
+% Allocate memory for variables
+H0 = zeros(channel.Nr, channel.Nt, channel.Nc, U, M);
+Arx0 = zeros(channel.Nr, channel.Ncl*channel.Nray, U, M);
+pl = zeros(M, U);
+muTx = zeros(M, channel.Ncl, U);
 
-%% generate users and access points positions
-[xa, ya, xu, yu] = genNodesPositions(rAP, M, U);
+% Generate BS and UE positions
+[xbs, ybs, xue, yue] = genNodesPositions(rUE, M, U);
 
-%% Average path loss for a scenario with a user at cell border being served by an AP at cell center
-averageShadowing = exp((log(10)/10*dp_s)^2/2);  % theoretical value of average shadowing
-pathLossWithoutShadowing = pLoss(f,rAP,np,0);   % path loss not considering shadowing
-C = pathLossWithoutShadowing*averageShadowing;  % normalization constant
+% Average path loss for a scenario with a UE at cell border being served by a BS at cell center
+averageShadowing = exp((log(10)/10*dp_s)^2/2);  % Theoretical value of average shadowing
+pathLossWithoutShadowing = pLoss(f,rUE,np,0);   % Path loss not considering shadowing
+C = pathLossWithoutShadowing*averageShadowing;  % Normalization constant
 
-% for each AP
+% For each BS
 for m = 1:M
-    % for each UT
+    % For each UE
     for u = 1:U
-        % generate channel without path loss
-        [H0(:, :, :, m, u), ~, Arx0(:, :, m, u), ~, ~, muTx(u,:,m)] = channel.genRandomInstance;
+        % Generate channel without path loss
+        [H0(:, :, :, u, m), ~, Arx0(:, :, u, m), ~, ~, muTx(m,:,u)] = channel.genRandomInstance;
         
-        % distance (D) between UTs and APs:
-        D = mdist([xu(u), yu(u)], [xa(m), ya(m)]);
+        % Distance (D) between UEs and BSs:
+        D = mdist([xue(u), yue(u)], [xbs(m), ybs(m)]);
         
         % Path Loss
-        pl(u,m) = pLoss(f, D, np, dp_s)/C;
+        pl(m,u) = pLoss(f, D, np, dp_s)/C;
         
-        H0(:, :, :, m, u) = sqrt(pl(u, m))*H0(:, :, :, m, u);
+        H0(:, :, :, u, m) = sqrt(pl(m, u))*H0(:, :, :, u, m);
     end
 end
 end
 
-%% get equivalent channel combining channel and precoder
+%% Get equivalent channel combining channel and precoder
 function H = getEquivalentChannel(H0, W)
-G = H0(:,1,:,:, :);
-for m = 1:size(H0, 4)
-    for u = 1:size(H0, 5)
+G = H0(:,1,:,:,:);
+for u = 1:size(H0, 4)
+    for m = 1:size(H0, 5)
         for k = 1:size(H0, 3)
-            G(:, :, k, m, u) = H0(:, :, k, m, u)*W(:, u);
+            G(:, :, k, u, m) = H0(:, :, k, u, m)*W(:, m);
         end
     end
 end
 H1 = G;
 
-% permute tx antenna with user dim, as nr of tx antennas is one
-H = permute(H1, [1 5 3 4 2]);
+% Permute TX antenna with BS dim, as nr of TX antennas is one
+H = permute(H1, [1 4 3 5 2]);
 end
 
-function H = getEquivalentChannel_withoutW(H0, ~)
-% Remove the second input argument 'W' since it's not used
-% Get the size of the first three dimensions of H0
-[~, ~, L, M, U] = size(H0);
-% Initialize equivalent channel matrix G with H0
-G = H0(:, :, :, :, :);
-% Iterate over all dimensions of H0 to copy its values
-for m = 1:M
-    for u = 1:U
-        for k = 1:L
-            G(:, :, k, m, u) = H0(:, :, k, m, u); % Copy values without multiplication with W
-        end
-    end
-end
-
-% Permute tx antenna with user dim, as the number of tx antennas is one
-H = permute(G, [1 5 3 4 2]);
-end
-
-%% compute digital part of equalizer
+%% Compute digital part of equalizer
 function Gd = computeDigitalEqualizer(Ga, H, nvar)
-%% get parameters
-    Nrx = size(H, 1);                                   % nr of users
-    U = size(H, 2);                                     % nr of users
-    K = size(H, 3);                                     % nr of subcarriers
-    M = size(H, 4);                                     % nr of APs
-    Nrf = size(Ga, 2);                                  % nr of RF chains
-    %% allocate memory
-    %Gd = zeros(Nrf, U, K, M);
-    Gd = zeros(Nrf, M, K, U); %(DL)
-    % for each AP
-    for m = 1:U
-        % initialize auxiliary variable to be used to compute normalizing constant
-        S0 = zeros(M, 1);
-        % for each subcarrier
-        for k = 1:K
-            % compute received signal correlation
-            R = H(:, :, k, m)*H(:, :, k, m)' + nvar*eye(Nrx);
-            % compute optimum digital part
-            % is used the pseudo inverse instead of inverse since the matrix R may
-            % be ill conditioned as some UT-AP pairs may have very low path loss
-            Gd(:,:,k,m) = inv(Ga(:,:,m)'*R*Ga(:,:,m))*(Ga(:,:,m)'*H(:,:,k,m));
-            % compute auxiliary random variable to normalize digital part
-            S0 = S0 + diag(Gd(:,:,k,m)'*Ga(:,:,m)'*H(:,:,k,m));
-        end
-        % for each subcarrier
-        for k = 1:K
-            % normalize digital part such that \sum_k diag(Gd,k'*Ga'*Hk) = I
-            Gd(:,:,k,m) = Gd(:,:,k,m)*diag(K./S0.'');
-        end
+% Get parameters
+Nrx = size(H, 1);                                   % Nr of UEs
+U = size(H, 4);                                     % Nr of UEs
+K = size(H, 3);                                     % Nr of subcarriers
+M = size(H, 5);                                     % Nr of BSs
+Nrf = size(Ga, 2);                                  % Nr of RF chains
+
+% Allocate memory
+Gd = zeros(Nrf, M, K, U);
+
+% For each BS
+for m = 1:M
+    % Initialize auxiliary variable to be used to compute normalizing constant
+    S0 = zeros(U, 1);
+    % For each subcarrier
+    for k = 1:K
+        % Compute received signal correlation
+        R = H(:, :, k, :, m)*H(:, :, k, :, m)' + nvar*eye(Nrx);
+        % Compute optimum digital part
+        % Use the pseudo-inverse instead of inverse since the matrix R may
+        % be ill-conditioned as some UE-BS pairs may have very low path loss
+        Gd(:,:,k,m) = inv(Ga(:,:,m)'*R*Ga(:,:,m))*(Ga(:,:,m)'*H(:,:,k,:,m));
+        % Compute auxiliary random variable to normalize digital part
+        S0 = S0 + diag(Gd(:,:,k,m)'*Ga(:,:,m)'*H(:,:,k,:,m));
+    end
+    
+    % For each subcarrier
+    for k = 1:K
+        % Normalize digital part such that \sum_k diag(Gd,k'*Ga'*Hk) = I
+        Gd(:,:,k,m) = Gd(:,:,k,m)*diag(K./S0.'');
     end
 end
-
-
-function Gd = computeDigitalEqualizerwithoutGa(~, H, nvar)
-    % Get parameters
-    Nrx = size(H, 1);  % Number of receivers
-    U = size(H, 2);    % Number of users
-    K = size(H, 3);    % Number of subcarriers
-    M = size(H, 4);    % Number of APs
-    
-    % Allocate memory for Gd
-    Gd = zeros(Nrx, U, K, M);
-    
-    % Compute Gd without Ga
-    for m = 1:M
-        for k = 1:K
-            % Compute received signal correlation
-            R = H(:, :, k, m) * H(:, :, k, m)' + nvar * eye(Nrx);
-            % Compute optimum digital part
-            Gd(:, :, k, m) = inv(R) * H(:, :, k, m);
-        end
-    end
 end
 
 %% Path loss
 function PL= pLoss(f,d,E_NLOS,f_NLOS)
 waveLen = 0.3/f;
 
-G_TX=15;      %15 dBi
-G_Rx=24.5;    %24.5 dBi
+G_TX=15;      % 15 dBi
+G_Rx=24.5;    % 24.5 dBi
 Gain=G_TX+G_Rx;
 Gain_L=10^(Gain/10);
 
 d0=1;
 Beta0=10*log10((4*pi*d0)/waveLen).^2;
 
-%E_NLOS=4.1;  %NLOS Path-loss exponents in dB
-%f_NLOS=7.6;  %NLOS Standard deviation of shadowing factor in dB
+%E_NLOS=4.1;  % NLOS Path-loss exponents in dB
+%f_NLOS=7.6;  % NLOS Standard deviation of shadowing factor in dB
 
-A_NLOS=f_NLOS*randn();     %A_NLOS= 10.^(f_NLOS*randn()/10);  %linear
+A_NLOS=f_NLOS*randn();     % A_NLOS= 10.^(f_NLOS*randn()/10);  % Linear
 
 Beta= Beta0 + 10*E_NLOS*log10(d/d0) + A_NLOS;
 Beta_L= 10^(Beta/10);
 
-%Ga_Beta= Gain - Beta;
-%Ga_Beta_L1=10^(Ga_Beta/10);
+% Ga_Beta= Gain - Beta;
+% Ga_Beta_L1=10^(Ga_Beta/10);
 
 PL= Gain_L/Beta_L;
 end
 
 %% Generate nodes positions
-function [x, y, xs, ys] = genNodesPositions(rAP, M, U)
+function [x, y, xs, ys] = genNodesPositions(rUE, M, U)
 % Inputs
-%  rAP - AP coverage radius
-%  M - number of APs
-%  U - number of UTs
+% rUE - UE coverage radius
+% M - Number of BSs
+% U - Number of UEs
 % Outputs
-%  [x, y] - APs positions
-%  [xs, ys] - UTs positions
+% [x, y] - BSs positions
+% [xs, ys] - UEs positions
 
 %%%%%%%%%%%%%% Code %%%%%%%%%%%%%
-% Generate APs positions
-[x, y] = genUnifUserDist(M, rAP, 0, 0);
+% Generate BSs positions
+[x, y] = genUnifUserDist(M, rUE, 0, 0);
 
-% Generate UTs positions within AP radius (500 m)
-[xs, ys] = genUnifUserDist(U, rAP, 0, 0);
+% Generate UEs positions within BS radius (50 m)
+[xs, ys] = genUnifUserDist(U, rUE, 0, 0);
 end
 
 %% Generate uniform user distribution positions within a circle
@@ -306,8 +250,7 @@ x = xCenter + r.*cos(angles(1,:));
 y = yCenter + r.*sin(angles(1,:));
 end
 
-%% compute distance between two points
+%% Compute distance between two points
 function d = mdist(A, B)
 d = sqrt((A(1) - B(1)).^2 + (A(2) - B(2)).^2);
 end
-
