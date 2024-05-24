@@ -1,11 +1,11 @@
-%function main
+ %function main
 %% parameters
 % user terminal parameters
-U = 2;                              % nr Users
-Ntx = 16;                           % nr antennas UT
+U = 4;                              % nr Users
+Ntx =1;                           % nr antennas UT
 
 % AP parameters
-M = 4;                              % nr APs
+M = 16;                              % nr APs
 Nrx = 16;                           % nr antennas AP
 NrxRF = U;                          % nr RF chains AP
 
@@ -23,13 +23,14 @@ MODULATION_ORDER = 4;               % QPSK
 % simulation parameters
 Nchannels = 100;                    % number of channel realizations
 Nsym = 1;                          % number of noise realizations
-EbN0 = -20:10:20;                   % energy per bit to noise power spectral density ratio
+EbN0 = -28:4:4;                   % energy per bit to noise power spectral density ratio
+%EbN0 = 100;  
 nvar = 10.^(-EbN0./10)/(log2(MODULATION_ORDER));   % noise variance
 
 %% allocate memory and construct objects
 ber = nan(Nchannels, Nsym, length(EbN0));
 channel = CWideband_mmWave_Channel(Nrx, Ntx, K, K/4, Ncl, Nray, 10, 10, AngleSpread);%% construct channel object
-DFT_S_OFDM = CDFT_S_OFDM(K, U, 1, MODULATION_ORDER);                            %% construct DFT-S-OFDM object
+DFT_S_OFDM = CDFT_S_OFDM(K, U, 1, MODULATION_ORDER);                            %% construct DFT-S-OFDM object //sc-fdma
 
 %% open new figure to plot the results
 figure('Position', [100, 100, 1*560, 1*420]);
@@ -56,26 +57,30 @@ for ch = 1:Nchannels
             W = exp(1j*2*pi*rand(Ntx, U));                                      % analog precoder
             
             %% Equivalent channel, combining channel and precoder
-            H = getEquivalentChannel(H0, W);
+            %H = getEquivalentChannel(H0, W);
+            %H = getEquivalentChannel_withoutW(H0);
+            H = permute(H0, [1 5 3 4 2]);
             
             %% Channel
             y = zeros(Nrx, K, M);                                               % alocate memory for received signal
             % pass transmitted signal through the channel and add noise
             for m = 1:M
                 for k = 1:K
-                    y(:, k, m) = H(:, :, k, m)*s(k, :).' + sqrt(nvar(p))*noise(:,k);
+                    % analog precoder changes
+                    y(:, k, m) = H(:, :, k, m)*s(k, :).'+ sqrt(nvar(p))*noise(:,k);                             
                 end
             end
             
             %% Base station
-            Ga = exp(1j*2*pi*rand(Nrx, NrxRF, M));                              % random analog equalizer part           
-            Gd = computeDigitalEqualizer(Ga, H, nvar(p));                       % MMSE digital equalizer part
-            
+            Gd = computeDigitalEqualizerwithoutGa(H, nvar(p));                       % MMSE digital equalizer part
+
             % equalize received signal at each AP
             ce = zeros(U, K, M);
             for m = 1:M
                 for k = 1:K
-                    ce(:, k) = Gd(:, :, k, m)'*Ga(:, :, m)'*y(:, k, m);
+
+                    %ce(:, k) = Gd(:, :, k, m)'*y(:, k, m);
+                    ce(:, k,m) = Gd(:, :, k, m)'*y(:, k, m);
                 end
             end
             
@@ -92,9 +97,10 @@ for ch = 1:Nchannels
     sim_time = toc; % read timer
     
     %% plot results (average ber over channel and noise)
-    %semilogy(EbN0, squeeze((ber, [1 2]));
+    %semilogy(EbN0, squeeze(nanmean(ber, [1 2])));
+    figure(2)
     semilogy(EbN0, squeeze(mean(ber, [1 2])));
-    axis([min(EbN0) max(EbN0) 1e-4 0.25])
+    axis([min(EbN0) max(EbN0) 1e-6 1e-1])
     xlabel('EbN0 (dB)')
     ylabel('BER')
     pause(1)                                                                    % wait for the plotting function to finish
@@ -149,55 +155,85 @@ for m = 1:M
 end
 end
 
-%% get equivalent channel combining channel and precoder
-function H = getEquivalentChannel(H0, W)
-G = H0(:,1,:,:, :);
-for m = 1:size(H0, 4)
-    for u = 1:size(H0, 5)
-        for k = 1:size(H0, 3)
-            G(:, :, k, m, u) = H0(:, :, k, m, u)*W(:, u);
+
+function H = getEquivalentChannel_withoutW(H0)
+% Remove the second input argument 'W' since it's not used
+% Get the size of the first three dimensions of H0
+[~, ~, L, M, U] = size(H0);
+% Initialize equivalent channel matrix G with H0
+G = H0(:, :, :, :, :);
+% Iterate over all dimensions of H0 to copy its values
+for m = 1:M
+    for u = 1:U
+        for k = 1:L
+            G(:, :, k, m, u) = H0(:, :, k, m, u); % Copy values without multiplication with W
         end
     end
 end
-H1 = G;
 
-% permute tx antenna with user dim, as nr of tx antennas is one
-H = permute(H1, [1 5 3 4 2]);
+% Permute tx antenna with user dim, as the number of tx antennas is one
+H = permute(G, [1 5 3 4 2]);
 end
+
 %% compute digital part of equalizer
 function Gd = computeDigitalEqualizer(Ga, H, nvar)
 %% get parameters
-Nrx = size(H, 1);                                   % nr of users
-U = size(H, 2);                                     % nr of users
-K = size(H, 3);                                     % nr of subcarriers
-M = size(H, 4);                                     % nr of APs
-Nrf = size(Ga, 2);                                  % nr of RF chains
-
-%% allocate memory
-Gd = zeros(Nrf, U, K, M);
-
-% for each AP
-for m = 1:M
-    % initialize auxiliary variable to be used to compute normalizing constant
-    S0 = zeros(U, 1);
-    % for each subcarrier
-    for k = 1:K
-        % compute received signal correlation
-        R = H(:, :, k, m)*H(:, :, k, m)' + nvar*eye(Nrx);
-        % compute optimum digital part
-        % is used the pseudo inverse instead of inverse since the matrix R may
-        % be ill conditioned as some UT-AP pairs may have very low path loss
-        Gd(:,:,k,m) = inv(Ga(:,:,m)'*R*Ga(:,:,m))*(Ga(:,:,m)'*H(:,:,k,m));
-        % compute auxiliary random variable to normalize digital part
-        S0 = S0 + diag(Gd(:,:,k,m)'*Ga(:,:,m)'*H(:,:,k,m));
-    end
-    
-    % for each subcarrier
-    for k = 1:K
-        % normalize digital part such that \sum_k diag(Gd,k'*Ga'*Hk) = I
-        Gd(:,:,k,m) = Gd(:,:,k,m)*diag(K./S0.'');
+    Nrx = size(H, 1);                                   % nr of users
+    U = size(H, 2);                                     % nr of users
+    K = size(H, 3);                                     % nr of subcarriers
+    M = size(H, 4);                                     % nr of APs
+    Nrf = size(Ga, 2);                                  % nr of RF chains
+    %% allocate memory
+    Gd = zeros(Nrf, U, K, M);
+    % for each AP
+    for m = 1:M
+        % initialize auxiliary variable to be used to compute normalizing constant
+        S0 = zeros(U, 1);
+        % for each subcarrier
+        for k = 1:K
+            % compute received signal correlation
+            R = H(:, :, k, m)*H(:, :, k, m)' + nvar*eye(Nrx);
+            % compute optimum digital part
+            % is used the pseudo inverse instead of inverse since the matrix R may
+            % be ill conditioned as some UT-AP pairs may have very low path loss
+            Gd(:,:,k,m) = inv(Ga(:,:,m)'*R*Ga(:,:,m))*(Ga(:,:,m)'*H(:,:,k,m));
+            % compute auxiliary random variable to normalize digital part
+           % S0 = S0 + diag(Gd(:,:,k,m)'*Ga(:,:,m)'*H(:,:,k,m));
+        end
+        % for each subcarrier
+        % for k = 1:K
+        %     % normalize digital part such that \sum_k diag(Gd,k'*Ga'*Hk) = I
+        %     Gd(:,:,k,m) = Gd(:,:,k,m)*diag(K./S0.'');
+        % end
     end
 end
+
+
+function Gd = computeDigitalEqualizerwithoutGa(H, nvar)
+    % Get parameters
+    Nrx = size(H, 1);  % Number of receivers
+    U = size(H, 2);    % Number of users
+    K = size(H, 3);    % Number of subcarriers
+    M = size(H, 4);    % Number of APs
+    
+    % Allocate memory for Gd
+    Gd = zeros(Nrx, U, K, M);
+    
+    % Compute Gd without Ga
+    for m = 1:M
+        S0 = zeros(U, 1);
+        for k = 1:K
+            % Compute received signal correlation
+            R = H(:, :, k, m) * H(:, :, k, m)' + nvar * eye(Nrx);
+            % Compute optimum digital part
+            Gd(:, :, k, m) = inv(R) * H(:, :, k, m);
+          %  S0 = S0 + diag(Gd(:,:,k,m)'*H(:,:,k,m));
+        end
+        % for k = 1:K
+        %     % normalize digital part such that \sum_k diag(Gd,k'*Ga'*Hk) = I
+        %     Gd(:,:,k,m) = Gd(:,:,k,m)*diag(K./S0.'');
+        % end
+    end
 end
 
 %% Path loss

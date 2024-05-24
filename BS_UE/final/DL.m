@@ -1,15 +1,36 @@
+% fazer com mais parametros diferentes n aps, n UE
+
+load('4U16AP.mat');
+% Plot the graph
+figure('Position', [100, 100, 1*560, 1*420]);
+title('UE - AP');
+semilogy(EbN0, squeeze(mean(ber, [1 2])), 'LineWidth', 2,'DisplayName','UE - AP');
+axis([min(EbN0) max(EbN0) 1e-4 0.65]);
+xlabel('EbN0 (dB)');
+ylabel('BER');
+grid on;
+hold on;
+clc;
+clear;
+
+
+%% For comparing with UE - AP data
+clc;
+clear;
 %function main
 %% parameters
-% user terminal parameters
-U = 2;                              % nr Users
-Ntx = 16;                           % nr antennas UT
-
 % AP parameters
-M = 4;                              % nr APs
-Nrx = 16;                           % nr antennas AP
-NrxRF = U;                          % nr RF chains AP
+M = 16;                              % n APs
+NAp = 16;                           % nr antennas Acess Point
+
+% UE  parameters
+U = 4;                              % nr UEs
+NUe = 1;                           % nr antennas User Equipment
+NrxRF = NUe;                        % nr RF chains is equal to the number of antennas
 
 % channel parameters
+
+
 Ncl = 5;                            % nr clusters
 Nray = 3;                           % nr rays
 AngleSpread = 8;                    % angle spread
@@ -21,18 +42,18 @@ MODULATION_ORDER = 4;               % QPSK
 
 
 % simulation parameters
-Nchannels = 100;                    % number of channel realizations
+Nchannels = 1000;                    % number of channel realizations
 Nsym = 1;                          % number of noise realizations
-EbN0 = -20:10:20;                   % energy per bit to noise power spectral density ratio
+EbN0 = -28:4:4;                   % energy per bit to noise power spectral density ratio 
+%EbN0=100;
 nvar = 10.^(-EbN0./10)/(log2(MODULATION_ORDER));   % noise variance
 
 %% allocate memory and construct objects
 ber = nan(Nchannels, Nsym, length(EbN0));
-channel = CWideband_mmWave_Channel(Nrx, Ntx, K, K/4, Ncl, Nray, 10, 10, AngleSpread);%% construct channel object
-DFT_S_OFDM = CDFT_S_OFDM(K, U, 1, MODULATION_ORDER);                            %% construct DFT-S-OFDM object
+channel = CWideband_mmWave_Channel(NUe, NAp, K, K/4, Ncl, Nray, 10, 10, AngleSpread);%% construct channel object (DL)
+DFT_S_OFDM = CDFT_S_OFDM(K, U, 1, MODULATION_ORDER);                            %% construct DFT-S-OFDM object //sc-fdma (DL)
 
 %% open new figure to plot the results
-figure('Position', [100, 100, 1*560, 1*420]);
 
 %% start timer 
 tic
@@ -41,62 +62,52 @@ tic
 for ch = 1:Nchannels
     
     % generate channel for all UT and AP pairs
-    H0 = generateChannels(channel, M, U);
-    
+    H0 = generateChannels(channel, U, M); %(DL)
     %% for each noise realization
     for n = 1:Nsym
         % generate noise with unit variance
-        noise = sqrt(1/2)*complex(randn(Nrx, K), randn(Nrx, K));
-        
+        noise = sqrt(1/2)*complex(randn(NUe, K), randn(NUe, K)); %(DL)
         %% sweep over the EbN0 range
         for p = 1:length(EbN0)
-            %% User terminals
+            %% Access Points
             b = DFT_S_OFDM.genRandBits();                                       % Generate random bits
             s = DFT_S_OFDM.mod(b);                                              % DFT_S_OFDM modulation
-            W = exp(1j*2*pi*rand(Ntx, U));                                      % analog precoder
             
-            %% Equivalent channel, combining channel and precoder
-            H = getEquivalentChannel(H0, W);
+            H = permute(H0,[4 2 3 5 1]);
             
-            %% Channel
-            y = zeros(Nrx, K, M);                                               % alocate memory for received signal
-            % pass transmitted signal through the channel and add noise
-            for m = 1:M
-                for k = 1:K
-                    y(:, k, m) = H(:, :, k, m)*s(k, :).' + sqrt(nvar(p))*noise(:,k);
+            Wd = computeDigitalPrecoder(H, nvar(p),M);
+
+            y1 = zeros(K,U);
+            y = zeros(K,U); 
+            
+            for k = 1:K
+                for u = 1:U
+                    for m = 1:M
+                        y1(k,u) = y1(k,u)+H0(:, :, k, u, m) * Wd(:, :, k, m) * s(k, :).' ;
+                        
+                    end
+                    y(k,u) = y1(k,u) + sqrt(nvar(p))*noise(:,k);
                 end
             end
-            
-            %% Base station
-            Ga = exp(1j*2*pi*rand(Nrx, NrxRF, M));                              % random analog equalizer part           
-            Gd = computeDigitalEqualizer(Ga, H, nvar(p));                       % MMSE digital equalizer part
-            
-            % equalize received signal at each AP
-            ce = zeros(U, K, M);
-            for m = 1:M
-                for k = 1:K
-                    ce(:, k) = Gd(:, :, k, m)'*Ga(:, :, m)'*y(:, k, m);
-                end
-            end
-            
-            % average signals from all APs at CU
-            ce = mean(ce, 3);
-            
-            % DFT-S-OFDM demodulation
-            br = DFT_S_OFDM.demod(ce.');
-            
-            %% compute ber
+     
+            br = DFT_S_OFDM.demod(y);
+           
             [~, ber(ch, n, p)] = biterr(b, br);
+            
         end
     end
     sim_time = toc; % read timer
     
     %% plot results (average ber over channel and noise)
-    %semilogy(EbN0, squeeze((ber, [1 2]));
-    semilogy(EbN0, squeeze(mean(ber, [1 2])));
-    axis([min(EbN0) max(EbN0) 1e-4 0.25])
+    %semilogy(EbN0, squeeze(nanmean(ber, [1 2])));
+    %semilogy(EbN0, squeeze(mean(ber, [1 2])));
+    figure(1)
+    semilogy(EbN0, squeeze(mean(ber, [1 2])), 'r', 'LineWidth', 2, 'DisplayName','UE - AP');
+    axis([min(EbN0) max(EbN0) 1e-4 0.65]); % Adjust the y-axis limit
     xlabel('EbN0 (dB)')
     ylabel('BER')
+    grid on;
+    sgtitle('Comparison between UE - AP and AP - UE');
     pause(1)                                                                    % wait for the plotting function to finish
     
     %% display information about simulation
@@ -107,7 +118,7 @@ for ch = 1:Nchannels
     end
 end
 %end
-
+legend({'UE-AP','AP-UE'})
 
 %% generate equivalent channel, including precoder, for all UT and AP pairs
 function H0 = generateChannels(channel, M, U)
@@ -149,56 +160,32 @@ for m = 1:M
 end
 end
 
-%% get equivalent channel combining channel and precoder
-function H = getEquivalentChannel(H0, W)
-G = H0(:,1,:,:, :);
-for m = 1:size(H0, 4)
-    for u = 1:size(H0, 5)
-        for k = 1:size(H0, 3)
-            G(:, :, k, m, u) = H0(:, :, k, m, u)*W(:, u);
+
+function  Wd  = computeDigitalPrecoder(H, nvar, M)
+    % Get parameters
+    NAp = size(H, 2);  % Number of receivers
+    U = size(H, 1);    % Number of users
+    K = size(H, 3);    % Number of subcarriers
+    M = size(H, 4);    % Number of APs
+    
+    % Allocate memory for Gd
+    Wd = zeros(NAp, U, K, M);
+    
+    S0 = zeros(U, 1);
+    % Compute Gd without Ga
+    for m = 1:M
+        
+        for k = 1:K
+            % Compute received signal correlation
+            R = H(:, :, k, m) * H(:, :, k, m)'+ nvar * eye(U);
+            % Compute optimum digital part
+            Wd(:, :, k, m) =  H(:, :, k, m)'*inv(R);
+            powers = diag(Wd(:,:,k,m)'*Wd(:,:,k,m));
+            Wd(:,:,k,m) = Wd(:,:,k,m)/sqrt(M*diag(powers));
         end
     end
 end
-H1 = G;
 
-% permute tx antenna with user dim, as nr of tx antennas is one
-H = permute(H1, [1 5 3 4 2]);
-end
-%% compute digital part of equalizer
-function Gd = computeDigitalEqualizer(Ga, H, nvar)
-%% get parameters
-Nrx = size(H, 1);                                   % nr of users
-U = size(H, 2);                                     % nr of users
-K = size(H, 3);                                     % nr of subcarriers
-M = size(H, 4);                                     % nr of APs
-Nrf = size(Ga, 2);                                  % nr of RF chains
-
-%% allocate memory
-Gd = zeros(Nrf, U, K, M);
-
-% for each AP
-for m = 1:M
-    % initialize auxiliary variable to be used to compute normalizing constant
-    S0 = zeros(U, 1);
-    % for each subcarrier
-    for k = 1:K
-        % compute received signal correlation
-        R = H(:, :, k, m)*H(:, :, k, m)' + nvar*eye(Nrx);
-        % compute optimum digital part
-        % is used the pseudo inverse instead of inverse since the matrix R may
-        % be ill conditioned as some UT-AP pairs may have very low path loss
-        Gd(:,:,k,m) = inv(Ga(:,:,m)'*R*Ga(:,:,m))*(Ga(:,:,m)'*H(:,:,k,m));
-        % compute auxiliary random variable to normalize digital part
-        S0 = S0 + diag(Gd(:,:,k,m)'*Ga(:,:,m)'*H(:,:,k,m));
-    end
-    
-    % for each subcarrier
-    for k = 1:K
-        % normalize digital part such that \sum_k diag(Gd,k'*Ga'*Hk) = I
-        Gd(:,:,k,m) = Gd(:,:,k,m)*diag(K./S0.'');
-    end
-end
-end
 
 %% Path loss
 function PL= pLoss(f,d,E_NLOS,f_NLOS)
