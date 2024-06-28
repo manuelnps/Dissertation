@@ -5,11 +5,12 @@ clear;
 
 %% Communication parameters
 % AP parameters
-ntarg = 3; %number of targets
+ntarg = 1; %number of targets
 
-M = 16;                              % n APs
-NAp = 16;                           % nr antennas Acess Point
+M = 4;                              % n APs
+NAp = 32;                           % nr antennas Acess Point
 Q = NAp;
+%P =
 
 % UE  parameters
 U = 4;                              % nr UEs
@@ -53,17 +54,15 @@ ber = nan(Nchannels, Nsym, length(EbN0));
 channel = CWideband_mmWave_Channel(NUe, NAp, K, K/4, Ncl, Nray, 10, 10, AngleSpread); %% construct channel object (DL)
 DFT_S_OFDM = CDFT_S_OFDM(K, U, 1, MODULATION_ORDER); %% construct DFT-S-OFDM object //sc-fdma (DL)
 
-for m = 1:M %um angulo e uma distancia para cada AP (em relaçao ao alvo)
     for h = 1:ntarg
-        targ = [15,15];
-        APAngT(m) = genAngle();
-        APAngR(h) = genAngle();
-        [x, y] = genUnifUserDist(M, 500, 0, 0);
-        MPos = [x(m), y(m)];
-        APDist(m) = mdist(MPos, targ); 
+    
+        for m = 1:M
+            APAngT(m,h) = genAngle();
+        end
+        %APAngR(h) = genAngle();
+        
     end
-end 
-
+APAngR = [45];
 Fm = zeros(NAp, NAp); % 3D matrix to store each Fm result
 AtTotal = zeros(NAp, M); % 2D matrix to store each At result
 
@@ -71,12 +70,15 @@ AtTotal = zeros(NAp, M); % 2D matrix to store each At result
 for m = 1: M
     for h = 1 : ntarg
         
-        [Ar, At] = genRadarChannel(c0, fc, NAp, NAp, APAngT(m), APAngR(h) );
-
-        AtTotal(:,m) = At;
-        AtTotalH = AtTotal';
+        [Ar, At] = genRadarChannel(c0, fc, NAp, NAp, APAngT(m,h), APAngR(h) );
         
-        ArTotal(:,h) = Ar;
+        %adicionar ganho de refletividade
+        Fm(:,:,m,h) = Ar*At';
+        
+        AtTotal(:,m,h) = At;
+        %AtTotalH = AtTotal';
+        
+        %ArTotal(:,h) = Ar;
     end 
 end 
 
@@ -138,7 +140,8 @@ end
 
 for h = 1 : ntarg
     for m = 1:M
-        yr(:,m,h) = ArTotal(:,h) * (AtTotalH(m,:) * AtTotal(:,m));
+        xm = AtTotal(:,m,h); %adicionar exp(1j randn)
+        yr(:,m,h) = Fm(:,:,m,h)*xm  %adicionar ruido fixo (var) aleatorio;
     end
 end
 
@@ -156,7 +159,7 @@ S = fft(RxSignal, N);
 steering_vectors = zeros(NAp, length(angles));
 for idx = 1:length(angles)
     angle = angles(idx);
-    steering_vectors(:, idx) = exp(1j * elemR * kw * d * sind(angle-91)) / sqrt(NAp); % MISTAKE IS HERE
+    steering_vectors(:, idx) = exp(1j * elemR * kw * d * sind(angle-90)) / sqrt(NAp);
 end
 
 % FFT of all steering vectors
