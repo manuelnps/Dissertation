@@ -5,16 +5,18 @@ clear;
 
 %% Communication parameters
 % AP parameters
-ntarg = 1; %number of targets
+APAngR = [-40];
+ref= [ 20 ]; %
+ntarg = length(APAngR); %number of targets
 
 M = 4;                              % n APs
-NAp = 32;                           % nr antennas Acess Point
-Q = NAp;
-%P =
+NAp = 200;                           % nr antennas Acess Point (communication)
+Q = NAp;                            %nr antennas for receiving AP (radar)
+P = NAp;                              %nr antennas for transmitting AP (radar)
 
 % UE  parameters
 U = 4;                              % nr UEs
-NUe = 1;                           % nr antennas User Equipment
+NUe = 1;                           % nr antennas User Equipment (communication)
 NrxRF = NUe;                        % nr RF chains is equal to the number of antennas
 
 % channel parameters
@@ -55,30 +57,21 @@ channel = CWideband_mmWave_Channel(NUe, NAp, K, K/4, Ncl, Nray, 10, 10, AngleSpr
 DFT_S_OFDM = CDFT_S_OFDM(K, U, 1, MODULATION_ORDER); %% construct DFT-S-OFDM object //sc-fdma (DL)
 
     for h = 1:ntarg
-    
         for m = 1:M
             APAngT(m,h) = genAngle();
-        end
-        %APAngR(h) = genAngle();
-        
+        end   
     end
-APAngR = [45];
+
 Fm = zeros(NAp, NAp); % 3D matrix to store each Fm result
 AtTotal = zeros(NAp, M); % 2D matrix to store each At result
 
 % calcular o canal 
 for m = 1: M
     for h = 1 : ntarg
-        
         [Ar, At] = genRadarChannel(c0, fc, NAp, NAp, APAngT(m,h), APAngR(h) );
-        
         %adicionar ganho de refletividade
-        Fm(:,:,m,h) = Ar*At';
-        
+        Fm(:,:,m,h) = (Ar*At')*10^(ref(h)./20); 
         AtTotal(:,m,h) = At;
-        %AtTotalH = AtTotal';
-        
-        %ArTotal(:,h) = Ar;
     end 
 end 
 
@@ -138,15 +131,20 @@ for ch = 1:Nchannels
     end
 end
 
+% Fixed noise variance
+fixed_noise_var = 10^(30/10);
+fixed_noise = sqrt(fixed_noise_var/2) * (randn(NAp, 1) + 1j * randn(NAp, 1));
+
 for h = 1 : ntarg
     for m = 1:M
-        xm = AtTotal(:,m,h); %adicionar exp(1j randn)
-        yr(:,m,h) = Fm(:,:,m,h)*xm  %adicionar ruido fixo (var) aleatorio;
+        xm = AtTotal(:,m,h); 
+        yr(:,m,h) = Fm(:,:,m,h)*xm ;  
     end
 end
 
+
 % Summing received signals
-RxSignal = sum(sum(yr, 3), 2);
+RxSignal = sum(sum(yr, 3), 2) + fixed_noise;
 
 N = length(RxSignal); % Length of RxSignal
 angles = 0:180; % Angle grid for estimation
@@ -167,16 +165,16 @@ W = fft(steering_vectors, N);
 
 % Compute periodogram using cross-power spectral density approach
 for idx = 1:length(angles)
-    P(idx) = (1/ N) * abs(W(:, idx)' * S)^2;
+    P(idx) = ((1/ N) * abs(W(:, idx)' * S)^2)/NAp;
 end
 
 % Normalize periodogram
-P = P / max(P);
+%P = P / max(P);
 xaxis = -90:90;
 
 % Plot periodogram
 figure;
-plot(xaxis, P);
+plot(xaxis, 10*log10(P));
 xlabel('Angle (degrees)');
 ylabel('Normalized Power');
 title('Periodogram for Angle Estimation (FFT)');
@@ -305,16 +303,16 @@ function d = mdist(A, B)
 d = sqrt((A(1) - B(1))^2 + (A(2) - B(2))^2);
 end
 
-function [Ar, At] = genRadarChannel(c0, fc, NAp, NUt, AngT, AngR)
-elemT = (0:NAp-1)';
-elemR = (0:NUt-1)';
+function [Ar, At] = genRadarChannel(c0, fc, P, Q, AngT, AngR)
+elemT = (0:P-1)';
+elemR = (0:Q-1)';
 
 wavelen = c0 / fc;
 d = wavelen / 2;
 k = 2 * pi / wavelen;
 
-At = exp(1j * elemT * k * d * sind(AngT)) / sqrt(NAp);
-Ar = exp(1j * elemR * k * d * sind(AngR)) / sqrt(NUt);
+At = exp(1j * elemT * k * d * sind(AngT)) / sqrt(P);
+Ar = exp(1j * elemR * k * d * sind(AngR)) / sqrt(Q);
 end
 
 % Generate Truncated Laplace random variable
